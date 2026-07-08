@@ -209,6 +209,9 @@ PAGE = """
     .status {
       line-height: 1.5;
     }
+    .stacked-action {
+      margin-top: 10px;
+    }
     .muted {
       color: #65736f;
       font-size: 14px;
@@ -259,7 +262,7 @@ PAGE = """
 
     <section class="panel">
       <h2>Log Fish</h2>
-      <form method="post" action="{{ url_for('log_fish_event') }}">
+      <form class="stacked-action" method="post" action="{{ url_for('log_fish_event') }}">
         <input type="hidden" name="outcome" value="caught">
         <label for="fish_caught">Caught fish</label>
         <select id="fish_caught" name="fish">
@@ -276,42 +279,10 @@ PAGE = """
 
         <button type="submit">I Caught One</button>
       </form>
-    </section>
-
-    <section class="panel">
-      <h2>Missed Fish</h2>
       <form method="post" action="{{ url_for('log_fish_event') }}">
         <input type="hidden" name="outcome" value="missed">
-        <label for="fish_missed">Missed fish, optional</label>
-        <select id="fish_missed" name="fish">
-          <option value="unknown">Unknown</option>
-          {% for fish in fish_options %}
-            <option value="{{ fish }}">{{ fish }}</option>
-          {% endfor %}
-        </select>
-
-        <label for="custom_fish_missed">Custom fish</label>
-        <input id="custom_fish_missed" name="custom_fish" placeholder="Use only if you are confident">
-
-        <label for="miss_notes">Miss notes</label>
-        <textarea id="miss_notes" name="notes" placeholder="Hooked and lost, follow, short bite, lure, retrieve"></textarea>
-
+        <input type="hidden" name="fish" value="unknown">
         <button class="secondary" type="submit">Missed One</button>
-      </form>
-    </section>
-
-    <section class="panel">
-      <h2>Quick Notes</h2>
-      <form method="post" action="{{ url_for('log_fish_event') }}">
-        <input type="hidden" name="outcome" value="note">
-        <input type="hidden" name="fish" value="none">
-        <label for="custom_fish">Optional fish</label>
-        <input id="custom_fish" name="custom_fish" placeholder="Use only if not in list">
-
-        <label for="note_text">Note</label>
-        <textarea id="note_text" name="notes" placeholder="Lure change, baitfish seen, follows, current change"></textarea>
-
-        <button class="secondary" type="submit">Save Note</button>
       </form>
     </section>
 
@@ -401,9 +372,9 @@ PAGE = """
     <h2>Data</h2>
     <div class="grid">
       <a class="button secondary" href="{{ url_for('sessions') }}">Sessions</a>
-      <a class="button secondary" href="{{ url_for('export_csv') }}" target="_blank" rel="noopener" download="fishing_log.csv">Export CSV</a>
+      <button class="secondary" type="button" onclick="downloadCsv()">Export CSV</button>
     </div>
-    <p class="muted">Export opens separately so the app stays available. Weather is stored when each fish event is logged.</p>
+    <p class="muted">Export downloads a CSV while keeping the app open. Weather is stored when each fish event is logged.</p>
   </section>
 </main>
 
@@ -436,6 +407,28 @@ setBrowserTimezone();
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("{{ url_for('service_worker') }}");
+}
+
+async function downloadCsv() {
+  try {
+    const response = await fetch("{{ url_for('export_csv') }}", { credentials: "same-origin" });
+    if (!response.ok) {
+      alert("CSV export failed.");
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "fishing_log.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert("CSV export failed: " + error.message);
+  }
 }
 </script>
 </body>
@@ -1076,7 +1069,7 @@ def log_fish_event():
 
     outcome = request.form.get("outcome", "caught").strip().lower()
 
-    if outcome not in {"caught", "missed", "note"}:
+    if outcome not in {"caught", "missed"}:
         return redirect(url_for("index", message="Invalid fish event."))
 
     custom_fish = request.form.get("custom_fish", "").strip()
@@ -1121,8 +1114,6 @@ def log_fish_event():
         message = f"Logged caught {fish}."
     elif outcome == "missed":
         message = f"Logged missed {fish}."
-    else:
-        message = "Logged note."
 
     return redirect(url_for("index", message=message))
 
