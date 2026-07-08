@@ -210,7 +210,12 @@ PAGE = """
       line-height: 1.5;
     }
     .stacked-action {
-      margin-top: 10px;
+      margin-top: 22px;
+      padding-top: 14px;
+      border-top: 1px solid #d8e2df;
+    }
+    .missed-button {
+      background: #5b6870;
     }
     .muted {
       color: #65736f;
@@ -282,7 +287,7 @@ PAGE = """
       <form method="post" action="{{ url_for('log_fish_event') }}">
         <input type="hidden" name="outcome" value="missed">
         <input type="hidden" name="fish" value="unknown">
-        <button class="secondary" type="submit">Missed One</button>
+        <button class="missed-button" type="submit">Missed One</button>
       </form>
     </section>
 
