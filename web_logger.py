@@ -3,11 +3,12 @@
 import argparse
 import csv
 import io
+import math
 import os
 import sqlite3
 from functools import wraps
 from secrets import token_hex
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -69,9 +70,19 @@ CREATE TABLE IF NOT EXISTS catches (
     wind_wave_height_m REAL,
     swell_wave_height_m REAL,
     swell_wave_period_s REAL,
+    moon_phase_name TEXT,
+    moon_age_days REAL,
+    moon_illumination_percent REAL,
     FOREIGN KEY(session_id) REFERENCES sessions(id)
 );
 """
+
+
+CATCH_MIGRATIONS = {
+    "moon_phase_name": "TEXT",
+    "moon_age_days": "REAL",
+    "moon_illumination_percent": "REAL",
+}
 
 
 PAGE = """
@@ -253,7 +264,7 @@ PAGE = """
             <tr>
               <td>{{ catch["caught_at"][11:16] }}</td>
               <td>{{ catch["fish"] }}</td>
-              <td>{{ catch["wind_speed_kmh"] }} km/h, {{ catch["beaufort_force"] }} Bf, wave {{ catch["wave_height_m"] }} m</td>
+              <td>{{ catch["wind_speed_kmh"] }} km/h, {{ catch["beaufort_force"] }} Bf, wave {{ catch["wave_height_m"] }} m, moon {{ catch["moon_illumination_percent"] }}%</td>
             </tr>
           {% endfor %}
           </tbody>
@@ -485,6 +496,18 @@ def initialize_database_at(db_path):
 
     with sqlite3.connect(db_path) as db:
         db.executescript(SCHEMA)
+        migrate_db(db)
+
+
+def migrate_db(db):
+    existing_columns = {
+        row[1]
+        for row in db.execute("PRAGMA table_info(catches)")
+    }
+
+    for column, column_type in CATCH_MIGRATIONS.items():
+        if column not in existing_columns:
+            db.execute(f"ALTER TABLE catches ADD COLUMN {column} {column_type}")
 
 
 def now_local(timezone):
@@ -560,6 +583,44 @@ def pressure_state(delta_pressure):
     if delta_pressure < -1.0:
         return "falling"
     return "stable"
+
+
+def moon_conditions(target_dt):
+    """
+    Approximate lunar phase and illumination.
+
+    The calculation is good enough for fishing-log pattern analysis, but not
+    intended for astronomical navigation.
+    """
+    synodic_month = 29.53058867
+    known_new_moon = datetime(2000, 1, 6, 18, 14, tzinfo=dt_timezone.utc)
+    target_utc = target_dt.astimezone(dt_timezone.utc)
+    days_since_new = (target_utc - known_new_moon).total_seconds() / 86400
+    moon_age = days_since_new % synodic_month
+    illumination = (1 - math.cos(2 * math.pi * moon_age / synodic_month)) / 2 * 100
+
+    if moon_age < 1.85 or moon_age >= 27.68:
+        phase = "new moon"
+    elif moon_age < 5.54:
+        phase = "waxing crescent"
+    elif moon_age < 9.23:
+        phase = "first quarter"
+    elif moon_age < 12.92:
+        phase = "waxing gibbous"
+    elif moon_age < 16.61:
+        phase = "full moon"
+    elif moon_age < 20.30:
+        phase = "waning gibbous"
+    elif moon_age < 23.99:
+        phase = "last quarter"
+    else:
+        phase = "waning crescent"
+
+    return {
+        "moon_phase_name": phase,
+        "moon_age_days": round(moon_age, 2),
+        "moon_illumination_percent": round(illumination, 1),
+    }
 
 
 def query_sun(lat, lon, day, timezone):
@@ -660,7 +721,7 @@ def fetch_conditions(lat, lon, timezone, target_dt):
     wind_direction = w["wind_direction_10m"][weather_index]
     beaufort_force, beaufort_description = wind_speed_to_beaufort(wind_speed)
 
-    return {
+    conditions = {
         "weather_source": "openmeteo_forecast",
         "matched_weather_time": w["time"][weather_index],
         "matched_marine_time": m["time"][marine_index],
@@ -688,6 +749,9 @@ def fetch_conditions(lat, lon, timezone, target_dt):
         "swell_wave_height_m": m["swell_wave_height"][marine_index],
         "swell_wave_period_s": m["swell_wave_period"][marine_index],
     }
+    conditions.update(moon_conditions(target_dt))
+
+    return conditions
 
 
 def active_session():
@@ -950,6 +1014,9 @@ def export_csv():
             catches.wind_wave_height_m,
             catches.swell_wave_height_m,
             catches.swell_wave_period_s,
+            catches.moon_phase_name,
+            catches.moon_age_days,
+            catches.moon_illumination_percent,
             sessions.notes AS session_notes
         FROM sessions
         LEFT JOIN catches ON catches.session_id = sessions.id
