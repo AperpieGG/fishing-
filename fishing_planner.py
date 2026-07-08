@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import io
 import math
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -58,6 +59,7 @@ def parse_datetime(value):
 
 def load_session_records(csv_path, fish, spot_name=None):
     fish = fish.strip().lower()
+    include_all_fish = fish in ("all", "any", "general")
     spot_name = spot_name.strip().lower() if spot_name else None
 
     with open(csv_path, newline="", encoding="utf-8") as f:
@@ -77,7 +79,9 @@ def load_session_records(csv_path, fish, spot_name=None):
         row["_catch_time"] = parse_datetime(row.get("catch_time"))
         row_fish = row.get("fish", "").strip().lower()
 
-        if row_fish == fish:
+        if include_all_fish and row_fish != "none":
+            row["_catch_count"] = parse_int(row.get("catch_count"), 1 if row.get("catch_time") else 0)
+        elif row_fish == fish:
             row["_catch_count"] = parse_int(row.get("catch_count"), 1 if row.get("catch_time") else 0)
         else:
             row["_catch_count"] = 0
@@ -579,6 +583,39 @@ def print_model(model, fish):
     print_rates("Catch rate by wind direction", model["wind_rates"])
 
 
+def best_rate_keys(rates, count=2):
+    return [
+        key
+        for key, _value in sorted(rates.items(), key=lambda item: item[1], reverse=True)[:count]
+    ]
+
+
+def print_summary(model):
+    best_buckets = best_rate_keys(model["bucket_rates"], 2)
+    best_phases = best_rate_keys(model["phase_rates"], 1)
+    best_beaufort = best_rate_keys(model["beaufort_rates"], 2)
+    best_pressure = best_rate_keys(model["pressure_rates"], 1)
+    best_wind = best_rate_keys(model["wind_rates"], 3)
+
+    print("SUMMARY")
+    print("-" * 72)
+
+    if best_buckets:
+        print(f"- Best general time: {best_buckets[0]}")
+    if len(best_buckets) > 1:
+        print(f"- Second good window: {best_buckets[1]}")
+    if best_phases:
+        print(f"- Best light phase: {best_phases[0]}")
+    if best_beaufort:
+        print(f"- Best wind: mostly {'-'.join(best_beaufort)} Beaufort")
+    if best_pressure:
+        print(f"- Best pressure: mostly {best_pressure[0]}")
+    if best_wind:
+        print(f"- Best wind direction: mostly {', '.join(best_wind)}")
+
+    print()
+
+
 def print_candidate(item, rank=None):
     prefix = f"{rank}. " if rank is not None else ""
     print(
@@ -604,6 +641,194 @@ def print_candidate(item, rank=None):
     print()
 
 
+def plot_fit(candidates, output_path, top_n):
+    chronological = sorted(candidates, key=lambda item: item["time"])
+    top = sorted(candidates, key=lambda item: item["fit_score"], reverse=True)[:top_n]
+    top_ids = {id(item) for item in top}
+
+    width = 1200
+    height = 520
+    left = 72
+    right = 28
+    top_pad = 48
+    bottom = 86
+    chart_width = width - left - right
+    chart_height = height - top_pad - bottom
+
+    def x_for(index):
+        if len(chronological) == 1:
+            return left + chart_width / 2
+
+        return left + (index / (len(chronological) - 1)) * chart_width
+
+    def y_for(score):
+        return top_pad + chart_height - (score / 100) * chart_height
+
+    def pdf_y(y):
+        return height - y
+
+    def pdf_text(text):
+        return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    def add_text(commands, x, y, text, size=12, color="0 0 0", align="left"):
+        approximate_width = len(str(text)) * size * 0.52
+        if align == "center":
+            x -= approximate_width / 2
+        elif align == "right":
+            x -= approximate_width
+
+        commands.append(
+            f"BT /F1 {size} Tf {color} rg {x:.1f} {pdf_y(y):.1f} Td ({pdf_text(text)}) Tj ET"
+        )
+
+    commands = [
+        "0.957 0.969 0.965 rg",
+        f"0 0 {width} {height} re f",
+    ]
+
+    add_text(commands, left, 30, "Upcoming Fishing Fit", size=22, color="0.082 0.129 0.122")
+    add_text(
+        commands,
+        width - right,
+        30,
+        f"Top {top_n} highlighted",
+        size=13,
+        color="0.396 0.451 0.435",
+        align="right",
+    )
+
+    for score in range(0, 101, 20):
+        y = y_for(score)
+        commands.append(
+            f"0.847 0.886 0.875 RG 0.8 w {left:.1f} {pdf_y(y):.1f} m {width - right:.1f} {pdf_y(y):.1f} l S"
+        )
+        add_text(
+            commands,
+            left - 12,
+            y + 4,
+            score,
+            size=12,
+            color="0.396 0.451 0.435",
+            align="right",
+        )
+
+    commands.append(
+        f"0.396 0.451 0.435 RG 1 w {left:.1f} {pdf_y(top_pad):.1f} m {left:.1f} {pdf_y(height - bottom):.1f} l S"
+    )
+    commands.append(
+        f"0.396 0.451 0.435 RG 1 w {left:.1f} {pdf_y(height - bottom):.1f} m {width - right:.1f} {pdf_y(height - bottom):.1f} l S"
+    )
+
+    if chronological:
+        path = []
+        for index, item in enumerate(chronological):
+            x = x_for(index)
+            y = pdf_y(y_for(item["fit_score"]))
+            operator = "m" if index == 0 else "l"
+            path.append(f"{x:.1f} {y:.1f} {operator}")
+
+        commands.append(f"0.078 0.424 0.361 RG 3 w {' '.join(path)} S")
+
+    for index, item in enumerate(chronological):
+        if id(item) not in top_ids:
+            continue
+
+        x = x_for(index)
+        y = y_for(item["fit_score"])
+        label = item["time"].strftime("%m-%d %H:%M")
+        commands.append(f"0.776 0.157 0.157 rg {x - 5:.1f} {pdf_y(y) - 5:.1f} 10 10 re f")
+        add_text(
+            commands,
+            x,
+            y - 12,
+            label,
+            size=11,
+            color="0.439 0.125 0.125",
+            align="center",
+        )
+
+    seen_days = set()
+    for index, item in enumerate(chronological):
+        day = item["time"].date()
+        if day in seen_days:
+            continue
+        seen_days.add(day)
+        x = x_for(index)
+        commands.append(
+            f"0.396 0.451 0.435 RG 1 w {x:.1f} {pdf_y(height - bottom):.1f} m {x:.1f} {pdf_y(height - bottom + 6):.1f} l S"
+        )
+        add_text(
+            commands,
+            x,
+            height - bottom + 24,
+            item["time"].strftime("%m-%d"),
+            size=12,
+            color="0.396 0.451 0.435",
+            align="center",
+        )
+
+    add_text(
+        commands,
+        left + chart_width / 2,
+        height - 20,
+        "Forecast date",
+        size=13,
+        color="0.396 0.451 0.435",
+        align="center",
+    )
+    add_text(
+        commands,
+        10,
+        top_pad + chart_height / 2,
+        "Fit score / 100",
+        size=13,
+        color="0.396 0.451 0.435",
+    )
+
+    write_pdf(output_path, width, height, "\n".join(commands))
+
+
+def write_pdf(output_path, width, height, content):
+    stream = content.encode("latin-1", errors="replace")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] "
+            f"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ).encode("ascii"),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+
+    output = io.BytesIO()
+    output.write(b"%PDF-1.4\n")
+    offsets = [0]
+
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(output.tell())
+        output.write(f"{index} 0 obj\n".encode("ascii"))
+        output.write(obj)
+        output.write(b"\nendobj\n")
+
+    xref_position = output.tell()
+    output.write(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    output.write(b"0000000000 65535 f \n")
+
+    for offset in offsets[1:]:
+        output.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+
+    output.write(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_position}\n%%EOF\n"
+        ).encode("ascii")
+    )
+
+    with open(output_path, "wb") as f:
+        f.write(output.getvalue())
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Rank upcoming fishing windows from real session logs, including blanks."
@@ -621,8 +846,13 @@ def main():
     parser.add_argument("--timezone")
     parser.add_argument("--spot-name", default="", help="Only learn from this spot_name.")
     parser.add_argument("--days", type=int, default=7)
-    parser.add_argument("--top", type=int, default=10)
+    parser.add_argument("--top", type=int, default=1)
     parser.add_argument("--show-model", action="store_true")
+    parser.add_argument(
+        "--plot-fit",
+        default="",
+        help="Save a PDF chart of hourly fit scores, e.g. fit.pdf.",
+    )
 
     args = parser.parse_args()
     fish = args.fish or args.fish_arg or "melanouri"
@@ -655,6 +885,8 @@ def main():
     if args.show_model:
         print_model(model, fish)
 
+    print_summary(model)
+
     print("BEST WINDOW EACH DAY")
     print("-" * 72)
     for item in best_by_day(candidates):
@@ -664,6 +896,10 @@ def main():
     print("-" * 72)
     for rank, item in enumerate(candidates[:args.top], start=1):
         print_candidate(item, rank)
+
+    if args.plot_fit:
+        plot_fit(candidates, args.plot_fit, args.top)
+        print(f"Saved fit plot: {args.plot_fit}")
 
     print("Note: predictions become useful only after you log real blank and successful sessions.")
 
