@@ -210,12 +210,22 @@ PAGE = """
       line-height: 1.5;
     }
     .stacked-action {
-      margin-top: 22px;
-      padding-top: 14px;
-      border-top: 1px solid #d8e2df;
+      margin-top: 34px;
+      padding: 16px 12px 12px;
+      border: 2px dashed #9aa8a4;
+      border-radius: 8px;
+      background: #f1f4f3;
     }
     .missed-button {
       background: #5b6870;
+    }
+    .action-label {
+      display: block;
+      margin: 0 0 10px;
+      color: #4f5d59;
+      font-size: 14px;
+      font-weight: 750;
+      text-transform: uppercase;
     }
     .muted {
       color: #65736f;
@@ -267,7 +277,7 @@ PAGE = """
 
     <section class="panel">
       <h2>Log Fish</h2>
-      <form class="stacked-action" method="post" action="{{ url_for('log_fish_event') }}">
+      <form method="post" action="{{ url_for('log_fish_event') }}">
         <input type="hidden" name="outcome" value="caught">
         <label for="fish_caught">Caught fish</label>
         <select id="fish_caught" name="fish">
@@ -284,9 +294,10 @@ PAGE = """
 
         <button type="submit">I Caught One</button>
       </form>
-      <form method="post" action="{{ url_for('log_fish_event') }}">
+      <form class="stacked-action" method="post" action="{{ url_for('log_fish_event') }}">
         <input type="hidden" name="outcome" value="missed">
         <input type="hidden" name="fish" value="unknown">
+        <span class="action-label">Hooked but not landed</span>
         <button class="missed-button" type="submit">Missed One</button>
       </form>
     </section>
