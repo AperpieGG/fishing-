@@ -459,6 +459,12 @@ def close_db(_error):
 
 
 def init_db():
+    db_path = app.config["DATABASE"]
+    db_dir = os.path.dirname(db_path)
+
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
     with sqlite3.connect(app.config["DATABASE"]) as db:
         db.executescript(SCHEMA)
 
