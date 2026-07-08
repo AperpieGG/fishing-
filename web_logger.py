@@ -17,7 +17,19 @@ from flask import Flask, Response, g, jsonify, redirect, render_template_string,
 
 
 DEFAULT_TIMEZONE = "Europe/Athens"
-DEFAULT_FISH = ["melanouri", "sargos", "lavraki", "other"]
+DEFAULT_FISH = [
+    "melanouri",
+    "sargos",
+    "lavraki",
+    "xanos",
+    "perka",
+    "stira",
+    "rofos",
+    "gilos",
+    "tsipoura",
+    "kokali",
+    "other",
+]
 
 app = Flask(__name__)
 app.config["DATABASE"] = os.environ.get("DATABASE_PATH", "fishing_log.db")
@@ -44,6 +56,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS catches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL,
+    outcome TEXT NOT NULL DEFAULT 'caught',
     fish TEXT NOT NULL,
     caught_at TEXT NOT NULL,
     notes TEXT,
@@ -87,6 +100,7 @@ CATCH_MIGRATIONS = {
     "moon_age_days": "REAL",
     "moon_illumination_percent": "REAL",
     "sea_surface_temperature_c": "REAL",
+    "outcome": "TEXT NOT NULL DEFAULT 'caught'",
 }
 
 SESSION_MIGRATIONS = {
@@ -244,22 +258,60 @@ PAGE = """
     </section>
 
     <section class="panel">
-      <h2>Log Catch</h2>
-      <form method="post" action="{{ url_for('log_catch') }}">
-        <label for="fish">Fish</label>
-        <select id="fish" name="fish">
+      <h2>Log Fish</h2>
+      <form method="post" action="{{ url_for('log_fish_event') }}">
+        <input type="hidden" name="outcome" value="caught">
+        <label for="fish_caught">Caught fish</label>
+        <select id="fish_caught" name="fish">
           {% for fish in fish_options %}
             <option value="{{ fish }}">{{ fish }}</option>
           {% endfor %}
         </select>
 
-        <label for="custom_fish">Custom fish</label>
-        <input id="custom_fish" name="custom_fish" placeholder="Use only if not in list">
+        <label for="custom_fish_caught">Custom fish</label>
+        <input id="custom_fish_caught" name="custom_fish" placeholder="Use only if not in list">
 
         <label for="catch_notes">Catch notes</label>
         <textarea id="catch_notes" name="notes" placeholder="Lure, depth, current, lights, baitfish"></textarea>
 
         <button type="submit">I Caught One</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Missed Fish</h2>
+      <form method="post" action="{{ url_for('log_fish_event') }}">
+        <input type="hidden" name="outcome" value="missed">
+        <label for="fish_missed">Missed fish, optional</label>
+        <select id="fish_missed" name="fish">
+          <option value="unknown">Unknown</option>
+          {% for fish in fish_options %}
+            <option value="{{ fish }}">{{ fish }}</option>
+          {% endfor %}
+        </select>
+
+        <label for="custom_fish_missed">Custom fish</label>
+        <input id="custom_fish_missed" name="custom_fish" placeholder="Use only if you are confident">
+
+        <label for="miss_notes">Miss notes</label>
+        <textarea id="miss_notes" name="notes" placeholder="Hooked and lost, follow, short bite, lure, retrieve"></textarea>
+
+        <button class="secondary" type="submit">Missed One</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Quick Notes</h2>
+      <form method="post" action="{{ url_for('log_fish_event') }}">
+        <input type="hidden" name="outcome" value="note">
+        <input type="hidden" name="fish" value="none">
+        <label for="custom_fish">Optional fish</label>
+        <input id="custom_fish" name="custom_fish" placeholder="Use only if not in list">
+
+        <label for="note_text">Note</label>
+        <textarea id="note_text" name="notes" placeholder="Lure change, baitfish seen, follows, current change"></textarea>
+
+        <button class="secondary" type="submit">Save Note</button>
       </form>
     </section>
 
@@ -275,11 +327,12 @@ PAGE = """
       <h2>This Session</h2>
       {% if catches %}
         <table>
-          <thead><tr><th>Time</th><th>Fish</th><th>Conditions</th></tr></thead>
+          <thead><tr><th>Time</th><th>Outcome</th><th>Fish</th><th>Conditions</th></tr></thead>
           <tbody>
           {% for catch in catches %}
             <tr>
               <td>{{ catch["caught_at"][11:16] }}</td>
+              <td>{{ catch["outcome"] }}</td>
               <td>{{ catch["fish"] }}</td>
               <td>{{ catch["wind_speed_kmh"] }} km/h, {{ catch["beaufort_force"] }} Bf, wave {{ catch["wave_height_m"] }} m, sea {{ catch["sea_surface_temperature_c"] }}°C, moon {{ catch["moon_illumination_percent"] }}%</td>
             </tr>
@@ -348,9 +401,9 @@ PAGE = """
     <h2>Data</h2>
     <div class="grid">
       <a class="button secondary" href="{{ url_for('sessions') }}">Sessions</a>
-      <a class="button secondary" href="{{ url_for('export_csv') }}">Export CSV</a>
+      <a class="button secondary" href="{{ url_for('export_csv') }}" target="_blank" rel="noopener" download="fishing_log.csv">Export CSV</a>
     </div>
-    <p class="muted">Weather is stored when each catch is logged. Blank sessions are stored when you finish without catches.</p>
+    <p class="muted">Export opens separately so the app stays available. Weather is stored when each fish event is logged.</p>
   </section>
 </main>
 
@@ -418,7 +471,7 @@ SESSIONS_PAGE = """
   <h1>Sessions</h1>
   <table>
     <thead>
-      <tr><th>ID</th><th>Spot</th><th>Started</th><th>Ended</th><th>Water</th><th>Catches</th></tr>
+      <tr><th>ID</th><th>Spot</th><th>Started</th><th>Ended</th><th>Water</th><th>Caught</th><th>Missed</th></tr>
     </thead>
     <tbody>
     {% for session in sessions %}
@@ -432,7 +485,8 @@ SESSIONS_PAGE = """
           {{ session["water_clarity"] or "-" }},
           {{ session["current_strength"] or "-" }}
         </td>
-        <td>{{ session["catch_count"] }}</td>
+        <td>{{ session["catch_count"] or 0 }}</td>
+        <td>{{ session["missed_count"] or 0 }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -1012,16 +1066,21 @@ def start_session():
     return redirect(url_for("index", message="Session started."))
 
 
-@app.post("/catch")
+@app.post("/fish-event")
 @login_required
-def log_catch():
+def log_fish_event():
     session = active_session()
 
     if not session:
         return redirect(url_for("index", message="Start a session first."))
 
+    outcome = request.form.get("outcome", "caught").strip().lower()
+
+    if outcome not in {"caught", "missed", "note"}:
+        return redirect(url_for("index", message="Invalid fish event."))
+
     custom_fish = request.form.get("custom_fish", "").strip()
-    fish = custom_fish or request.form["fish"]
+    fish = custom_fish or request.form.get("fish", "none")
     caught_at = now_local(session["timezone"])
 
     try:
@@ -1036,6 +1095,7 @@ def log_catch():
 
     columns = [
         "session_id",
+        "outcome",
         "fish",
         "caught_at",
         "notes",
@@ -1043,6 +1103,7 @@ def log_catch():
     ]
     values = [
         session["id"],
+        outcome,
         fish,
         caught_at.isoformat(timespec="minutes"),
         request.form.get("notes", "").strip(),
@@ -1055,7 +1116,15 @@ def log_catch():
         values,
     )
     get_db().commit()
-    return redirect(url_for("index", message=f"Logged {fish}."))
+
+    if outcome == "caught":
+        message = f"Logged caught {fish}."
+    elif outcome == "missed":
+        message = f"Logged missed {fish}."
+    else:
+        message = "Logged note."
+
+    return redirect(url_for("index", message=message))
 
 
 @app.post("/finish")
@@ -1082,7 +1151,10 @@ def finish_session():
 def sessions():
     rows = get_db().execute(
         """
-        SELECT sessions.*, COUNT(catches.id) AS catch_count
+        SELECT
+            sessions.*,
+            SUM(CASE WHEN catches.outcome = 'caught' THEN 1 ELSE 0 END) AS catch_count,
+            SUM(CASE WHEN catches.outcome = 'missed' THEN 1 ELSE 0 END) AS missed_count
         FROM sessions
         LEFT JOIN catches ON catches.session_id = sessions.id
         GROUP BY sessions.id
@@ -1110,16 +1182,24 @@ def export_csv():
             sessions.water_clarity,
             sessions.current_strength,
             CASE
+                WHEN catches.id IS NULL THEN 'blank'
+                ELSE catches.outcome
+            END AS outcome,
+            CASE
                 WHEN catches.id IS NULL THEN 'none'
                 ELSE catches.fish
             END AS fish,
             CASE
-                WHEN catches.id IS NULL THEN 0
-                ELSE 1
+                WHEN catches.outcome = 'caught' THEN 1
+                ELSE 0
             END AS catch_count,
             CASE
-                WHEN catches.id IS NULL THEN 'no'
-                ELSE 'yes'
+                WHEN catches.outcome = 'missed' THEN 1
+                ELSE 0
+            END AS missed_count,
+            CASE
+                WHEN catches.outcome = 'caught' THEN 'yes'
+                ELSE 'no'
             END AS has_catch,
             catches.caught_at AS condition_time,
             catches.caught_at AS catch_time,
