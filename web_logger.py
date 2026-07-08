@@ -865,10 +865,12 @@ def manifest():
 @app.route("/icon.svg")
 def app_icon():
     svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#c62828"/>
-  <path d="M300 86v238c0 57-46 104-104 104s-104-47-104-104c0-28 11-54 30-73" fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round"/>
-  <path d="M300 86c38 18 66 48 82 90" fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round"/>
-  <path d="M122 251 72 249l28 42" fill="none" stroke="#ffffff" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="512" height="512" rx="96" fill="#89cff0"/>
+  <path d="M112 286c76-92 188-92 308 0-120 92-232 92-308 0Z" fill="#ffffff"/>
+  <path d="M118 286 72 236v100l46-50Z" fill="#ffffff"/>
+  <circle cx="356" cy="270" r="17" fill="#146c5c"/>
+  <path d="M222 222c26-28 70-42 116-28" fill="none" stroke="#146c5c" stroke-width="24" stroke-linecap="round"/>
+  <path d="M218 350c32 10 76 5 116-22" fill="none" stroke="#146c5c" stroke-width="20" stroke-linecap="round"/>
 </svg>"""
     return Response(svg, mimetype="image/svg+xml")
 
