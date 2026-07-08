@@ -42,12 +42,27 @@ The web page lets you:
 
 - Start a session
 - Use your phone location or enter coordinates manually
+- Record actual water movement, water clarity, and current strength
 - Select a fish each time you catch one
-- Store weather, wind, pressure, sun, and marine conditions at catch time
+- Store weather, wind, pressure, sun, moon, sea temperature, and marine conditions at catch time
 - Finish the session even if it was blank
 - Export the SQLite data as CSV from `/export.csv`
 
 Data is stored in `fishing_log.db`.
+
+Session-level manual fields:
+
+- `actual_water_movement`: `flat`, `small chop`, `moving`, `rough`
+- `water_clarity`: `clear`, `stained`, `dirty`
+- `current_strength`: `none`, `weak`, `strong`
+
+Catch-level automatic fields include:
+
+- Air temperature, humidity, pressure, wind, cloud cover, and precipitation
+- Wave height, wave direction, wave period, wind-wave, and swell
+- Sea surface temperature
+- Sunrise, sunset, and civil twilight
+- Moon phase, moon age, and moon illumination
 
 ### Add To Phone Home Screen
 
@@ -193,13 +208,15 @@ The CSV row includes:
 
 - Record type, fish name, spot name, coordinates, timezone
 - Session start, session end, session duration, and catch count
+- Actual water movement, water clarity, and current strength
 - Fish name, coordinates, timezone, and catch time
 - Condition time used for weather lookup
 - Matched weather and marine timestamps
 - Sunrise, sunset, and civil twilight
+- Moon phase, moon age, and moon illumination
 - Temperature, humidity, precipitation, pressure, and pressure trend
 - Wind speed, wind direction, Beaufort force, and cloud cover
-- Wave, wind-wave, and swell data
+- Sea surface temperature, wave, wind-wave, and swell data
 - Lure, technique, water clarity, and notes
 - Experimental LRF score, kept for reference only
 - Notes
@@ -229,6 +246,17 @@ The planner ranks upcoming hours from:
 - Catch rate by wind direction
 - Similarity to successful-session weather and marine conditions
 
+It can also write a PDF fit chart:
+
+```bash
+python fishing_planner.py all \
+  --csv demo_lrf_catches.csv \
+  --spot-name "Rocky harbour" \
+  --show-model \
+  --top 10 \
+  --plot-fit fit.pdf
+```
+
 It does not use `lrf_score`.
 
 ## Data Sources
@@ -237,8 +265,9 @@ The scripts use:
 
 - Sunrise/sunset data from `api.sunrise-sunset.org`
 - Forecast weather from Open-Meteo
-- Marine/wave data from Open-Meteo Marine
+- Marine, wave, and sea-surface-temperature data from Open-Meteo Marine
 - Observed/historical weather in `catch_logger.py` from Meteostat
+- Approximate moon phase/illumination calculated locally in `web_logger.py`
 
 ## LRF Score
 
@@ -266,4 +295,6 @@ For useful patterns, log every trip to the same spot:
 - lure or bait
 - technique
 - water clarity
-- notes about current, lights, baitfish, and fishing pressure
+- actual water movement
+- current strength
+- notes about lights, baitfish, lure color/weight, and fishing pressure
