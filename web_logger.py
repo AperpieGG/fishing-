@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS catches (
     wind_wave_height_m REAL,
     swell_wave_height_m REAL,
     swell_wave_period_s REAL,
+    sea_surface_temperature_c REAL,
     moon_phase_name TEXT,
     moon_age_days REAL,
     moon_illumination_percent REAL,
@@ -82,6 +83,7 @@ CATCH_MIGRATIONS = {
     "moon_phase_name": "TEXT",
     "moon_age_days": "REAL",
     "moon_illumination_percent": "REAL",
+    "sea_surface_temperature_c": "REAL",
 }
 
 
@@ -264,7 +266,7 @@ PAGE = """
             <tr>
               <td>{{ catch["caught_at"][11:16] }}</td>
               <td>{{ catch["fish"] }}</td>
-              <td>{{ catch["wind_speed_kmh"] }} km/h, {{ catch["beaufort_force"] }} Bf, wave {{ catch["wave_height_m"] }} m, moon {{ catch["moon_illumination_percent"] }}%</td>
+              <td>{{ catch["wind_speed_kmh"] }} km/h, {{ catch["beaufort_force"] }} Bf, wave {{ catch["wave_height_m"] }} m, sea {{ catch["sea_surface_temperature_c"] }}°C, moon {{ catch["moon_illumination_percent"] }}%</td>
             </tr>
           {% endfor %}
           </tbody>
@@ -685,6 +687,7 @@ def query_marine(lat, lon, timezone, day):
             "start_date": day,
             "end_date": day,
             "hourly": ",".join([
+                "sea_surface_temperature",
                 "wave_height",
                 "wave_direction",
                 "wave_period",
@@ -748,6 +751,7 @@ def fetch_conditions(lat, lon, timezone, target_dt):
         "wind_wave_height_m": m["wind_wave_height"][marine_index],
         "swell_wave_height_m": m["swell_wave_height"][marine_index],
         "swell_wave_period_s": m["swell_wave_period"][marine_index],
+        "sea_surface_temperature_c": m.get("sea_surface_temperature", [None])[marine_index],
     }
     conditions.update(moon_conditions(target_dt))
 
@@ -1014,6 +1018,7 @@ def export_csv():
             catches.wind_wave_height_m,
             catches.swell_wave_height_m,
             catches.swell_wave_period_s,
+            catches.sea_surface_temperature_c,
             catches.moon_phase_name,
             catches.moon_age_days,
             catches.moon_illumination_percent,
