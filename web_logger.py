@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     timezone TEXT NOT NULL,
     started_at TEXT NOT NULL,
     ended_at TEXT,
+    actual_water_movement TEXT,
+    water_clarity TEXT,
+    current_strength TEXT,
     notes TEXT
 );
 
@@ -84,6 +87,12 @@ CATCH_MIGRATIONS = {
     "moon_age_days": "REAL",
     "moon_illumination_percent": "REAL",
     "sea_surface_temperature_c": "REAL",
+}
+
+SESSION_MIGRATIONS = {
+    "actual_water_movement": "TEXT",
+    "water_clarity": "TEXT",
+    "current_strength": "TEXT",
 }
 
 
@@ -226,6 +235,12 @@ PAGE = """
       {{ active["spot_name"] or "Unnamed spot" }}<br>
       Started: {{ active["started_at"] }}<br>
       Location: {{ "%.5f"|format(active["lat"]) }}, {{ "%.5f"|format(active["lon"]) }}
+      {% if active["actual_water_movement"] or active["water_clarity"] or active["current_strength"] %}
+        <br>
+        Water: {{ active["actual_water_movement"] or "not set" }},
+        clarity {{ active["water_clarity"] or "not set" }},
+        current {{ active["current_strength"] or "not set" }}
+      {% endif %}
     </section>
 
     <section class="panel">
@@ -298,6 +313,31 @@ PAGE = """
         <label for="timezone">Timezone</label>
         <input id="timezone" name="timezone" value="{{ default_timezone }}">
 
+        <label for="actual_water_movement">Actual water movement</label>
+        <select id="actual_water_movement" name="actual_water_movement">
+          <option value="">Not set</option>
+          <option value="flat">Flat</option>
+          <option value="small chop">Small chop</option>
+          <option value="moving">Moving</option>
+          <option value="rough">Rough</option>
+        </select>
+
+        <label for="water_clarity">Water clarity</label>
+        <select id="water_clarity" name="water_clarity">
+          <option value="">Not set</option>
+          <option value="clear">Clear</option>
+          <option value="stained">Stained</option>
+          <option value="dirty">Dirty</option>
+        </select>
+
+        <label for="current_strength">Current</label>
+        <select id="current_strength" name="current_strength">
+          <option value="">Not set</option>
+          <option value="none">None</option>
+          <option value="weak">Weak</option>
+          <option value="strong">Strong</option>
+        </select>
+
         <button type="submit">Start Fishing</button>
       </form>
     </section>
@@ -364,7 +404,7 @@ SESSIONS_PAGE = """
   <h1>Sessions</h1>
   <table>
     <thead>
-      <tr><th>ID</th><th>Spot</th><th>Started</th><th>Ended</th><th>Catches</th></tr>
+      <tr><th>ID</th><th>Spot</th><th>Started</th><th>Ended</th><th>Water</th><th>Catches</th></tr>
     </thead>
     <tbody>
     {% for session in sessions %}
@@ -373,6 +413,11 @@ SESSIONS_PAGE = """
         <td>{{ session["spot_name"] }}</td>
         <td>{{ session["started_at"] }}</td>
         <td>{{ session["ended_at"] or "active" }}</td>
+        <td>
+          {{ session["actual_water_movement"] or "-" }},
+          {{ session["water_clarity"] or "-" }},
+          {{ session["current_strength"] or "-" }}
+        </td>
         <td>{{ session["catch_count"] }}</td>
       </tr>
     {% endfor %}
@@ -502,14 +547,23 @@ def initialize_database_at(db_path):
 
 
 def migrate_db(db):
-    existing_columns = {
+    existing_catch_columns = {
         row[1]
         for row in db.execute("PRAGMA table_info(catches)")
     }
 
     for column, column_type in CATCH_MIGRATIONS.items():
-        if column not in existing_columns:
+        if column not in existing_catch_columns:
             db.execute(f"ALTER TABLE catches ADD COLUMN {column} {column_type}")
+
+    existing_session_columns = {
+        row[1]
+        for row in db.execute("PRAGMA table_info(sessions)")
+    }
+
+    for column, column_type in SESSION_MIGRATIONS.items():
+        if column not in existing_session_columns:
+            db.execute(f"ALTER TABLE sessions ADD COLUMN {column} {column_type}")
 
 
 def now_local(timezone):
@@ -868,8 +922,17 @@ def start_session():
 
     get_db().execute(
         """
-        INSERT INTO sessions (spot_name, lat, lon, timezone, started_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO sessions (
+            spot_name,
+            lat,
+            lon,
+            timezone,
+            started_at,
+            actual_water_movement,
+            water_clarity,
+            current_strength
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             request.form.get("spot_name", "").strip(),
@@ -877,6 +940,9 @@ def start_session():
             lon,
             timezone,
             started_at,
+            request.form.get("actual_water_movement", "").strip(),
+            request.form.get("water_clarity", "").strip(),
+            request.form.get("current_strength", "").strip(),
         ),
     )
     get_db().commit()
@@ -977,6 +1043,9 @@ def export_csv():
             sessions.timezone,
             sessions.started_at AS session_start_time,
             sessions.ended_at AS session_end_time,
+            sessions.actual_water_movement,
+            sessions.water_clarity,
+            sessions.current_strength,
             CASE
                 WHEN catches.id IS NULL THEN 'none'
                 ELSE catches.fish
