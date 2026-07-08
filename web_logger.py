@@ -460,12 +460,30 @@ def close_db(_error):
 
 def init_db():
     db_path = app.config["DATABASE"]
+
+    try:
+        initialize_database_at(db_path)
+    except (OSError, sqlite3.Error) as error:
+        fallback_path = "fishing_log.db"
+
+        if db_path == fallback_path:
+            raise
+
+        print(
+            f"Warning: could not open DATABASE_PATH={db_path!r}: {error}. "
+            f"Falling back to {fallback_path!r}. Data may not persist after redeploy."
+        )
+        app.config["DATABASE"] = fallback_path
+        initialize_database_at(fallback_path)
+
+
+def initialize_database_at(db_path):
     db_dir = os.path.dirname(db_path)
 
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
-    with sqlite3.connect(app.config["DATABASE"]) as db:
+    with sqlite3.connect(db_path) as db:
         db.executescript(SCHEMA)
 
 
