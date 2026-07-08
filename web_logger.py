@@ -866,11 +866,9 @@ def manifest():
 def app_icon():
     svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="96" fill="#89cff0"/>
-  <path d="M112 286c76-92 188-92 308 0-120 92-232 92-308 0Z" fill="#ffffff"/>
-  <path d="M118 286 72 236v100l46-50Z" fill="#ffffff"/>
-  <circle cx="356" cy="270" r="17" fill="#146c5c"/>
-  <path d="M222 222c26-28 70-42 116-28" fill="none" stroke="#146c5c" stroke-width="24" stroke-linecap="round"/>
-  <path d="M218 350c32 10 76 5 116-22" fill="none" stroke="#146c5c" stroke-width="20" stroke-linecap="round"/>
+  <path d="M112 286c76-92 188-92 308 0-120 92-232 92-308 0Z" fill="#ffffff" stroke="#111111" stroke-width="22" stroke-linejoin="round"/>
+  <path d="M118 286 72 236v100l46-50Z" fill="#ffffff" stroke="#111111" stroke-width="22" stroke-linejoin="round"/>
+  <circle cx="356" cy="270" r="17" fill="#111111"/>
 </svg>"""
     return Response(svg, mimetype="image/svg+xml")
 
