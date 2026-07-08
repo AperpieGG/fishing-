@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+lrf_catches.csv
+fishing_log.db
+fishing_log.db-*
