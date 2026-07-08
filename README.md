@@ -49,6 +49,15 @@ The web page lets you:
 
 Data is stored in `fishing_log.db`.
 
+### Add To Phone Home Screen
+
+After deploying the logger online and opening it on your phone:
+
+- iPhone: Safari -> Share -> Add to Home Screen
+- Android: Chrome -> menu -> Add to Home screen or Install app
+
+The app includes a web manifest, icon, and mobile metadata so it opens like a standalone app. For best results, use the deployed HTTPS URL. Phone location access usually requires HTTPS.
+
 ### Login Protection
 
 The web logger requires login. Configure these environment variables when deploying:

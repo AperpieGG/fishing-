@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from dateutil import parser as date_parser
-from flask import Flask, Response, g, redirect, render_template_string, request, session, url_for
+from flask import Flask, Response, g, jsonify, redirect, render_template_string, request, session, url_for
 
 
 DEFAULT_TIMEZONE = "Europe/Athens"
@@ -80,6 +80,13 @@ PAGE = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#146c5c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Fishing Logger">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="{{ url_for('manifest') }}">
+  <link rel="icon" href="{{ url_for('app_icon') }}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{{ url_for('app_icon') }}">
   <title>Fishing Logger</title>
   <style>
     :root {
@@ -306,6 +313,10 @@ function useLocation() {
     alert("Could not get location: " + err.message);
   });
 }
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("{{ url_for('service_worker') }}");
+}
 </script>
 </body>
 </html>
@@ -318,6 +329,13 @@ SESSIONS_PAGE = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#146c5c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Fishing Logger">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="{{ url_for('manifest') }}">
+  <link rel="icon" href="{{ url_for('app_icon') }}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{{ url_for('app_icon') }}">
   <title>Fishing Sessions</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 16px; background: #f4f7f6; color: #15211f; }
@@ -359,6 +377,13 @@ LOGIN_PAGE = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#146c5c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Fishing Logger">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="{{ url_for('manifest') }}">
+  <link rel="icon" href="{{ url_for('app_icon') }}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{{ url_for('app_icon') }}">
   <title>Fishing Logger Login</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 16px; background: #f4f7f6; color: #15211f; }
@@ -667,6 +692,54 @@ def index():
         default_timezone=DEFAULT_TIMEZONE,
         message=request.args.get("message", ""),
     )
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    return jsonify({
+        "name": "Fishing Logger",
+        "short_name": "Fishing",
+        "description": "Log fishing sessions, catches, and conditions from your phone.",
+        "start_url": url_for("index"),
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#f4f7f6",
+        "theme_color": "#146c5c",
+        "icons": [
+            {
+                "src": url_for("app_icon"),
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any maskable",
+            }
+        ],
+    })
+
+
+@app.route("/icon.svg")
+def app_icon():
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#146c5c"/>
+  <path d="M112 300c74-86 176-86 288 0-112 86-214 86-288 0Z" fill="#ffffff"/>
+  <circle cx="352" cy="284" r="16" fill="#146c5c"/>
+  <path d="M113 300 72 252v96l41-48Z" fill="#ffffff"/>
+  <path d="M180 212c22-34 56-52 100-52 46 0 82 20 108 60" fill="none" stroke="#ffffff" stroke-width="28" stroke-linecap="round"/>
+</svg>"""
+    return Response(svg, mimetype="image/svg+xml")
+
+
+@app.route("/service-worker.js")
+def service_worker():
+    script = """
+self.addEventListener("install", function(event) {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", function(event) {
+  event.waitUntil(self.clients.claim());
+});
+"""
+    return Response(script, mimetype="application/javascript")
 
 
 @app.route("/login", methods=["GET", "POST"])
