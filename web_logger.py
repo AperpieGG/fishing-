@@ -311,7 +311,8 @@ PAGE = """
         <button class="secondary" type="button" onclick="useLocation()">Use My Location</button>
 
         <label for="timezone">Timezone</label>
-        <input id="timezone" name="timezone" value="{{ default_timezone }}">
+        <input id="timezone" name="timezone" value="{{ default_timezone }}" placeholder="auto or Europe/Athens">
+        <p class="muted">Use <strong>auto</strong> or leave your phone's detected timezone unless you know the exact timezone name.</p>
 
         <label for="actual_water_movement">Actual water movement</label>
         <select id="actual_water_movement" name="actual_water_movement">
@@ -362,10 +363,23 @@ function useLocation() {
   navigator.geolocation.getCurrentPosition(function(pos) {
     document.getElementById("lat").value = pos.coords.latitude.toFixed(6);
     document.getElementById("lon").value = pos.coords.longitude.toFixed(6);
+    setBrowserTimezone();
   }, function(err) {
     alert("Could not get location: " + err.message);
   });
 }
+
+function setBrowserTimezone() {
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (timezone) {
+      document.getElementById("timezone").value = timezone;
+    }
+  } catch (_error) {
+  }
+}
+
+setBrowserTimezone();
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("{{ url_for('service_worker') }}");
@@ -567,7 +581,51 @@ def migrate_db(db):
 
 
 def now_local(timezone):
+    if not valid_timezone(timezone):
+        timezone = DEFAULT_TIMEZONE
+
     return datetime.now(ZoneInfo(timezone))
+
+
+def valid_timezone(timezone):
+    try:
+        ZoneInfo(timezone)
+        return True
+    except Exception:
+        return False
+
+
+def detect_timezone_from_coordinates(lat, lon):
+    response = requests.get(
+        "https://api.open-meteo.com/v1/forecast",
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "timezone": "auto",
+            "forecast_days": 1,
+            "current": "temperature_2m",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    timezone = response.json().get("timezone")
+
+    if timezone and valid_timezone(timezone):
+        return timezone
+
+    return DEFAULT_TIMEZONE
+
+
+def resolve_timezone(lat, lon, requested_timezone):
+    requested_timezone = (requested_timezone or "").strip()
+
+    if requested_timezone and requested_timezone.lower() != "auto" and valid_timezone(requested_timezone):
+        return requested_timezone
+
+    try:
+        return detect_timezone_from_coordinates(lat, lon)
+    except Exception:
+        return DEFAULT_TIMEZONE
 
 
 def parse_api_datetime(value, timezone):
@@ -917,7 +975,8 @@ def start_session():
 
     lat = float(request.form["lat"])
     lon = float(request.form["lon"])
-    timezone = request.form.get("timezone") or DEFAULT_TIMEZONE
+    requested_timezone = request.form.get("timezone")
+    timezone = resolve_timezone(lat, lon, requested_timezone)
     started_at = now_local(timezone).isoformat(timespec="minutes")
 
     get_db().execute(
@@ -946,6 +1005,10 @@ def start_session():
         ),
     )
     get_db().commit()
+
+    if requested_timezone and requested_timezone.strip() and requested_timezone.strip() != timezone:
+        return redirect(url_for("index", message=f"Session started. Timezone set to {timezone}."))
+
     return redirect(url_for("index", message="Session started."))
 
 
