@@ -6,6 +6,7 @@ import io
 import math
 import os
 import sqlite3
+import time
 from functools import wraps
 from secrets import token_hex
 from datetime import datetime, timezone as dt_timezone
@@ -36,6 +37,8 @@ app.config["DATABASE"] = os.environ.get("DATABASE_PATH", "fishing_log.db")
 app.secret_key = os.environ.get("SECRET_KEY") or token_hex(32)
 
 DB_INITIALIZED = False
+OPEN_METEO_CACHE_TTL_SECONDS = 10 * 60
+OPEN_METEO_CACHE = {}
 
 
 SCHEMA = """
@@ -826,56 +829,93 @@ def query_sun(lat, lon, day, timezone):
     }
 
 
-def query_weather(lat, lon, timezone, day):
-    response = requests.get(
-        "https://api.open-meteo.com/v1/forecast",
-        params={
-            "latitude": lat,
-            "longitude": lon,
-            "timezone": timezone,
-            "start_date": day,
-            "end_date": day,
-            "hourly": ",".join([
-                "temperature_2m",
-                "relative_humidity_2m",
-                "pressure_msl",
-                "surface_pressure",
-                "wind_speed_10m",
-                "wind_direction_10m",
-                "cloud_cover",
-                "precipitation",
-            ]),
-        },
-        timeout=20,
+def cached_open_meteo_get(url, params, cache_key):
+    now = time.monotonic()
+    cached = OPEN_METEO_CACHE.get(cache_key)
+
+    if cached and now - cached["stored_at"] < OPEN_METEO_CACHE_TTL_SECONDS:
+        return cached["data"]
+
+    try:
+        response = requests.get(url, params=params, timeout=20)
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        if error.response is not None and error.response.status_code == 429:
+            if cached:
+                return cached["data"]
+            raise RuntimeError(
+                "Open-Meteo rate limit reached. Wait a few minutes and try again."
+            ) from error
+        raise
+
+    data = response.json()
+    OPEN_METEO_CACHE[cache_key] = {
+        "stored_at": now,
+        "data": data,
+    }
+    return data
+
+
+def open_meteo_cache_key(endpoint, lat, lon, timezone, day, hourly_fields):
+    return (
+        endpoint,
+        round(float(lat), 4),
+        round(float(lon), 4),
+        timezone,
+        day,
+        tuple(hourly_fields),
     )
-    response.raise_for_status()
-    return response.json()
+
+
+def query_weather(lat, lon, timezone, day):
+    hourly_fields = [
+        "temperature_2m",
+        "relative_humidity_2m",
+        "pressure_msl",
+        "surface_pressure",
+        "wind_speed_10m",
+        "wind_direction_10m",
+        "cloud_cover",
+        "precipitation",
+    ]
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": timezone,
+        "start_date": day,
+        "end_date": day,
+        "hourly": ",".join(hourly_fields),
+    }
+    return cached_open_meteo_get(
+        "https://api.open-meteo.com/v1/forecast",
+        params,
+        open_meteo_cache_key("forecast", lat, lon, timezone, day, hourly_fields),
+    )
 
 
 def query_marine(lat, lon, timezone, day):
-    response = requests.get(
+    hourly_fields = [
+        "sea_surface_temperature",
+        "wave_height",
+        "wave_direction",
+        "wave_period",
+        "wind_wave_height",
+        "swell_wave_height",
+        "swell_wave_period",
+    ]
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": timezone,
+        "start_date": day,
+        "end_date": day,
+        "hourly": ",".join(hourly_fields),
+    }
+    return cached_open_meteo_get(
         "https://marine-api.open-meteo.com/v1/marine",
-        params={
-            "latitude": lat,
-            "longitude": lon,
-            "timezone": timezone,
-            "start_date": day,
-            "end_date": day,
-            "hourly": ",".join([
-                "sea_surface_temperature",
-                "wave_height",
-                "wave_direction",
-                "wave_period",
-                "wind_wave_height",
-                "swell_wave_height",
-                "swell_wave_period",
-            ]),
-        },
-        timeout=20,
+        params,
+        open_meteo_cache_key("marine", lat, lon, timezone, day, hourly_fields),
     )
-    response.raise_for_status()
-    return response.json()
-
 
 def fetch_conditions(lat, lon, timezone, target_dt):
     day = target_dt.date().isoformat()
