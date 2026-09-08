@@ -3,6 +3,7 @@
 import argparse
 import csv
 import io
+import json
 import math
 import os
 import sqlite3
@@ -38,6 +39,7 @@ app.secret_key = os.environ.get("SECRET_KEY") or token_hex(32)
 
 DB_INITIALIZED = False
 OPEN_METEO_CACHE_TTL_SECONDS = 10 * 60
+OPEN_METEO_STALE_TTL_SECONDS = 6 * 60 * 60
 OPEN_METEO_CACHE = {}
 
 
@@ -95,6 +97,12 @@ CREATE TABLE IF NOT EXISTS catches (
     moon_illumination_percent REAL,
     FOREIGN KEY(session_id) REFERENCES sessions(id)
 );
+
+CREATE TABLE IF NOT EXISTS api_cache (
+    cache_key TEXT PRIMARY KEY,
+    stored_at REAL NOT NULL,
+    response_json TEXT NOT NULL
+);
 """
 
 
@@ -111,6 +119,39 @@ SESSION_MIGRATIONS = {
     "water_clarity": "TEXT",
     "current_strength": "TEXT",
 }
+
+CONDITION_COLUMNS = [
+    "weather_source",
+    "matched_weather_time",
+    "matched_marine_time",
+    "sunrise",
+    "sunset",
+    "civil_twilight_begin",
+    "civil_twilight_end",
+    "temperature_c",
+    "relative_humidity_percent",
+    "pressure_msl_hpa",
+    "surface_pressure_hpa",
+    "pressure_state",
+    "delta_pressure_3h_hpa",
+    "wind_speed_kmh",
+    "wind_direction_deg",
+    "wind_direction_cardinal",
+    "beaufort_force",
+    "beaufort_description",
+    "cloud_cover_percent",
+    "precipitation_mm",
+    "wave_height_m",
+    "wave_direction_deg",
+    "wave_period_s",
+    "wind_wave_height_m",
+    "swell_wave_height_m",
+    "swell_wave_period_s",
+    "sea_surface_temperature_c",
+    "moon_phase_name",
+    "moon_age_days",
+    "moon_illumination_percent",
+]
 
 
 PAGE = """
@@ -830,18 +871,34 @@ def query_sun(lat, lon, day, timezone):
 
 
 def cached_open_meteo_get(url, params, cache_key):
-    now = time.monotonic()
-    cached = OPEN_METEO_CACHE.get(cache_key)
+    now = time.time()
+    cache_id = json.dumps(cache_key, separators=(",", ":"), sort_keys=True)
+    cached = OPEN_METEO_CACHE.get(cache_id)
 
     if cached and now - cached["stored_at"] < OPEN_METEO_CACHE_TTL_SECONDS:
         return cached["data"]
+
+    persistent_cached = get_db().execute(
+        "SELECT stored_at, response_json FROM api_cache WHERE cache_key = ?",
+        (cache_id,),
+    ).fetchone()
+
+    if persistent_cached:
+        cached = {
+            "stored_at": persistent_cached["stored_at"],
+            "data": json.loads(persistent_cached["response_json"]),
+        }
+        OPEN_METEO_CACHE[cache_id] = cached
+
+        if now - cached["stored_at"] < OPEN_METEO_CACHE_TTL_SECONDS:
+            return cached["data"]
 
     try:
         response = requests.get(url, params=params, timeout=20)
         response.raise_for_status()
     except requests.HTTPError as error:
         if error.response is not None and error.response.status_code == 429:
-            if cached:
+            if cached and now - cached["stored_at"] < OPEN_METEO_STALE_TTL_SECONDS:
                 return cached["data"]
             raise RuntimeError(
                 "Open-Meteo rate limit reached. Wait a few minutes and try again."
@@ -849,10 +906,21 @@ def cached_open_meteo_get(url, params, cache_key):
         raise
 
     data = response.json()
-    OPEN_METEO_CACHE[cache_key] = {
-        "stored_at": now,
+    stored_at = now
+    OPEN_METEO_CACHE[cache_id] = {
+        "stored_at": stored_at,
         "data": data,
     }
+    get_db().execute(
+        """
+        INSERT INTO api_cache (cache_key, stored_at, response_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(cache_key)
+        DO UPDATE SET stored_at = excluded.stored_at, response_json = excluded.response_json
+        """,
+        (cache_id, stored_at, json.dumps(data)),
+    )
+    get_db().commit()
     return data
 
 
@@ -1148,7 +1216,7 @@ def log_fish_event():
         "fish",
         "caught_at",
         "notes",
-        *conditions.keys(),
+        *CONDITION_COLUMNS,
     ]
     values = [
         session["id"],
@@ -1156,7 +1224,7 @@ def log_fish_event():
         fish,
         caught_at.isoformat(timespec="minutes"),
         request.form.get("notes", "").strip(),
-        *conditions.values(),
+        *[conditions[column] for column in CONDITION_COLUMNS],
     ]
     placeholders = ", ".join(["?"] * len(columns))
 
