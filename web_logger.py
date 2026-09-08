@@ -806,6 +806,16 @@ def pressure_state(delta_pressure):
     return "stable"
 
 
+def safe_float(value):
+    if value in (None, ""):
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def moon_conditions(target_dt):
     """
     Approximate lunar phase and illumination.
@@ -901,7 +911,8 @@ def cached_open_meteo_get(url, params, cache_key):
             if cached and now - cached["stored_at"] < OPEN_METEO_STALE_TTL_SECONDS:
                 return cached["data"]
             raise RuntimeError(
-                "Open-Meteo rate limit reached. Wait a few minutes and try again."
+                "Open-Meteo rate limit reached and no cached forecast is available yet. "
+                "Wait a few minutes and try again."
             ) from error
         raise
 
@@ -985,11 +996,139 @@ def query_marine(lat, lon, timezone, day):
         open_meteo_cache_key("marine", lat, lon, timezone, day, hourly_fields),
     )
 
+
+def query_world_weather_online(lat, lon, day):
+    api_key = os.environ.get("WWO_API_KEY")
+
+    if not api_key:
+        raise RuntimeError("WWO_API_KEY is not configured.")
+
+    response = requests.get(
+        "https://api.worldweatheronline.com/premium/v1/marine.ashx",
+        params={
+            "key": api_key,
+            "q": f"{lat},{lon}",
+            "format": "json",
+            "tp": 1,
+            "date": day,
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    errors = data.get("data", {}).get("error")
+    if errors:
+        message = errors[0].get("msg", errors) if isinstance(errors, list) else errors
+        raise RuntimeError(f"WorldWeatherOnline API error: {message}")
+
+    return data
+
+
+def parse_wwo_hour(day, hour_value, timezone):
+    hour_number = int(hour_value or 0) // 100
+    return datetime.fromisoformat(day).replace(
+        hour=hour_number,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=ZoneInfo(timezone),
+    )
+
+
+def find_nearest_wwo_hour_index(hourly, day, target_dt, timezone):
+    parsed = [parse_wwo_hour(day, row.get("time"), timezone) for row in hourly]
+    differences = [abs((dt - target_dt).total_seconds()) for dt in parsed]
+    return differences.index(min(differences))
+
+
+def extract_conditions_from_world_weather_online(data, sun, timezone, target_dt):
+    day = target_dt.date().isoformat()
+    weather_days = data.get("data", {}).get("weather") or []
+
+    if not weather_days:
+        raise RuntimeError("WorldWeatherOnline returned no marine forecast days.")
+
+    weather_day = next((item for item in weather_days if item.get("date") == day), weather_days[0])
+    hourly = weather_day.get("hourly") or []
+
+    if not hourly:
+        raise RuntimeError("WorldWeatherOnline returned no hourly marine forecast.")
+
+    forecast_day = weather_day.get("date", day)
+    index = find_nearest_wwo_hour_index(hourly, forecast_day, target_dt, timezone)
+    row = hourly[index]
+    matched_time = parse_wwo_hour(forecast_day, row.get("time"), timezone)
+
+    pressure_now = safe_float(row.get("pressure"))
+    pressure_before = safe_float(hourly[index - 3].get("pressure")) if index >= 3 else None
+    delta_pressure = None
+
+    if pressure_now is not None and pressure_before is not None:
+        delta_pressure = pressure_now - pressure_before
+
+    wind_speed = safe_float(row.get("windspeedKmph"))
+    wind_direction = safe_float(row.get("winddirDegree"))
+    beaufort_force, beaufort_description = wind_speed_to_beaufort(wind_speed)
+
+    conditions = {
+        "weather_source": "worldweatheronline_marine",
+        "matched_weather_time": matched_time.isoformat(timespec="minutes"),
+        "matched_marine_time": matched_time.isoformat(timespec="minutes"),
+        "sunrise": sun["sunrise"].isoformat(timespec="minutes"),
+        "sunset": sun["sunset"].isoformat(timespec="minutes"),
+        "civil_twilight_begin": sun["civil_twilight_begin"].isoformat(timespec="minutes"),
+        "civil_twilight_end": sun["civil_twilight_end"].isoformat(timespec="minutes"),
+        "temperature_c": safe_float(row.get("tempC")),
+        "relative_humidity_percent": safe_float(row.get("humidity")),
+        "pressure_msl_hpa": pressure_now,
+        "surface_pressure_hpa": None,
+        "pressure_state": pressure_state(delta_pressure),
+        "delta_pressure_3h_hpa": delta_pressure,
+        "wind_speed_kmh": wind_speed,
+        "wind_direction_deg": wind_direction,
+        "wind_direction_cardinal": row.get("winddir16Point") or wind_direction_cardinal(wind_direction),
+        "beaufort_force": beaufort_force,
+        "beaufort_description": beaufort_description,
+        "cloud_cover_percent": safe_float(row.get("cloudcover")),
+        "precipitation_mm": safe_float(row.get("precipMM")),
+        "wave_height_m": safe_float(row.get("sigHeight_m")),
+        "wave_direction_deg": safe_float(row.get("swellDir")),
+        "wave_period_s": safe_float(row.get("swellPeriod_secs")),
+        "wind_wave_height_m": None,
+        "swell_wave_height_m": safe_float(row.get("swellHeight_m")),
+        "swell_wave_period_s": safe_float(row.get("swellPeriod_secs")),
+        "sea_surface_temperature_c": safe_float(row.get("waterTemp_C")),
+    }
+    conditions.update(moon_conditions(target_dt))
+
+    return conditions
+
+
 def fetch_conditions(lat, lon, timezone, target_dt):
     day = target_dt.date().isoformat()
     sun = query_sun(lat, lon, day, timezone)
-    weather = query_weather(lat, lon, timezone, day)
-    marine = query_marine(lat, lon, timezone, day)
+
+    try:
+        weather = query_weather(lat, lon, timezone, day)
+        marine = query_marine(lat, lon, timezone, day)
+    except Exception as open_meteo_error:
+        if not os.environ.get("WWO_API_KEY"):
+            raise
+
+        try:
+            fallback = query_world_weather_online(lat, lon, day)
+            return extract_conditions_from_world_weather_online(
+                data=fallback,
+                sun=sun,
+                timezone=timezone,
+                target_dt=target_dt,
+            )
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"Open-Meteo failed: {open_meteo_error}; "
+                f"WorldWeatherOnline fallback failed: {fallback_error}"
+            ) from fallback_error
 
     weather_index = find_nearest_hour_index(weather["hourly"]["time"], target_dt, timezone)
     marine_index = find_nearest_hour_index(marine["hourly"]["time"], target_dt, timezone)
