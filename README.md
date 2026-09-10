@@ -24,6 +24,76 @@ python -m pip install -r requirements.txt
 `catch_logger.py` also uses `meteostat` for observed/historical weather data.
 `web_logger.py` also uses `flask`.
 
+## Ocean Map
+
+`ocean_map.py` runs an interactive world map for bathymetry inspection. It
+loads the included EMODnet Greece DTM tiles automatically, uses the included
+high-resolution NetCDF products where they overlap, and queries EMODnet's
+online point service when local data is not available.
+
+Install the dependencies and start it with:
+
+```bash
+python -m pip install -r requirements.txt
+python ocean_map.py --host 0.0.0.0 --port 5050
+```
+
+Open `http://127.0.0.1:5050` on the same computer. To use it from another
+device on the same network, find the computer's LAN address and open
+`http://COMPUTER_IP:5050` on that device. On macOS, the address is commonly
+shown by:
+
+```bash
+ipconfig getifaddr en0
+```
+
+The map supports a global bathymetry layer, cursor depth inspection, point
+selection with marine conditions, local high-resolution contours, a two-point
+distance measurement tool, and an optional animated wind field. Wind speed,
+direction, and Beaufort force are shown at an estimated 5 m above ground or
+sea level. The weather API provides its standard wind value at 10 m, so the
+application applies a neutral 1/7 power-law adjustment to estimate 5 m wind.
+For responsiveness, cursor hover sampling uses local files only; clicking a point
+can also use EMODnet's online depth fallback.
+The distance tool measures from any chosen coastline point to a target point;
+it does not infer the nearest coast.
+
+The global map layer is for visual context. Point sampling is most detailed
+where a local raster or EMODnet high-resolution product exists. Free global
+bathymetry is much coarser than 5 m, and near-shore accuracy depends on the
+survey data available for that location. Download additional EMODnet
+high-resolution products for a region with:
+
+```bash
+python download_emodnet_hr_bathymetry.py \
+  --bbox "23.0,37.5,24.5,38.5" \
+  --output data/emodnet_hr_bathymetry \
+  --extract
+```
+
+For Athens and the Saronic Gulf, EMODnet currently has no HR-DTM product in
+the catalogue. Download the current 1/16 arc-minute EMODnet DTM subset with:
+
+```bash
+python download_emodnet_bathymetry.py \
+  --bbox "23.25,37.25,24.25,38.25" \
+  --resolution 0.0010416667 \
+  --output data/emodnet_athens_saronic_2024.nc
+```
+
+The map detects this file automatically and uses it after the HR products.
+You can also provide a GEBCO 2026 NetCDF file as a global fallback by placing
+it at `data/gebco_2026.nc` or passing `--gebco PATH` when starting the map.
+
+For a threaded local deployment, install Gunicorn and run:
+
+```bash
+gunicorn --workers 2 --threads 4 --bind 0.0.0.0:5050 ocean_map:app
+```
+
+For a local GEBCO or EMODnet GeoTIFF/NetCDF, pass it explicitly with
+`--bathymetry PATH`. The map is not a navigation chart.
+
 ## Mobile Web Logger
 
 Run the web logger on your laptop before going fishing:
@@ -44,6 +114,7 @@ The web page lets you:
 - Use your phone location or enter coordinates manually
 - Record actual water movement, water clarity, and current strength
 - Select a fish each time you catch one
+- Report a missed fish when it gets hooked or bites but is not landed
 - Store weather, wind, pressure, sun, moon, sea temperature, and marine conditions at catch time
 - Finish the session even if it was blank
 - Export the SQLite data as CSV from `/export.csv`
@@ -82,7 +153,12 @@ WEB_LOGGER_USERNAME=your_username
 WEB_LOGGER_PASSWORD=a_long_random_password
 SECRET_KEY=a_long_random_secret
 DATABASE_PATH=fishing_log.db
+WWO_API_KEY=your_world_weather_online_key
 ```
+
+`WWO_API_KEY` is optional but recommended. When set, the web logger uses
+WorldWeatherOnline Marine API as a fallback if Open-Meteo is rate-limited or
+temporarily unavailable.
 
 For local testing, the default login is:
 
@@ -209,6 +285,8 @@ The CSV row includes:
 - Record type, fish name, spot name, coordinates, timezone
 - Session start, session end, session duration, and catch count
 - Actual water movement, water clarity, and current strength
+- Fish event outcome: `caught`, `missed`, `note`, or `blank`
+- `catch_count` for landed fish and `missed_count` for hooked/lost fish
 - Fish name, coordinates, timezone, and catch time
 - Condition time used for weather lookup
 - Matched weather and marine timestamps

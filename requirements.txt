@@ -3,3 +3,7 @@ python-dateutil
 meteostat
 flask
 gunicorn
+rasterio
+netCDF4
+contourpy
+Pillow
